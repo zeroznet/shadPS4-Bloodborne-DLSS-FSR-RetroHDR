@@ -57,8 +57,8 @@ Frame flow: game render, optional DLSS/FSR upscale, `post_process.frag` into a f
 - `src/core/libraries/videoout/driver.cpp`: `presenter->SetHDR(req.port->is_hdr)` enables HDR10 only when the game asks. Bloodborne never does, which is why the stock `allowHDR` option does nothing here.
 - `src/imgui/dlss_layer.cpp`: F1 panel. It writes `dlss.ini` (`BbDlssSettingsPath()`) through `SettingsFile`, and the renderer polls that file, so panel code needs no renderer access.
 - `src/imgui/renderer/imgui_impl_vulkan.cpp`: `pipeline` draws the game frame, `overlay_pipeline` everything else (split so RenoDX's shader replacement only hits the game frame).
-- `vk_hdr_meter.cpp`: HDR nits meter, shown with `SHADPS4_HDR_METER=1`; records only when the swapchain is `R16G16B16A16Sfloat`.
-- `vk_bb_frame_gen.cpp`: already links DXGI (`adapter->GetDesc1`).
+- `vk_hdr_meter.cpp`: HDR nits meter, shown with `SHADPS4_HDR_METER=1`; records only when the swapchain is `R16G16B16A16Sfloat` (RenoDX or RetroHDR; it required RenoDX before RetroHDR).
+- `vk_bb_frame_gen.cpp`: its DXGI code (`adapter->GetDesc1`) and the CMake `dxgi` link exist only in Streamline builds (`BB_STREAMLINE_DIR`), which CI never sets. `vk_retro_hdr.cpp` links `dxgi.lib` itself with `#pragma comment`.
 - `src/core/file_sys/bb_hdr_compat.cpp`: RenoDX-only game param rewrite, gated on `RenoDxLoaded()` in `fs.cpp`. Unrelated to this feature; don't widen its gate.
 
 ## Upstream code rules
