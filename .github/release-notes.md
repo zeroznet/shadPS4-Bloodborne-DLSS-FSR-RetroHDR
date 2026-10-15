@@ -11,4 +11,5 @@ SPDX-License-Identifier: GPL-2.0-or-later
 **Verify:**
 ```
 sha256sum -c SHA256SUMS
+Get-FileHash .\shadPS4-RetroHDR-<tag>-win64.zip -Algorithm SHA256  # PowerShell, compare with SHA256SUMS
 ```

@@ -47,13 +47,13 @@ Bloodborne is an SDR game. The HDR mod for this build, RenoDX, swaps the game's 
 
 - Runs inside the existing present pass: no extra pass, no extra copy.
 - The swapchain switches to scRGB (`R16G16B16A16_SFLOAT`, extended sRGB linear) at startup when the setting is on, Windows HDR is on for the display that holds the window, and the driver offers the format.
-- Peak brightness comes from Windows (`MaxLuminance` of that display); the brightness slider stops where SDR white reaches it, so nothing clips.
+- Peak brightness comes from Windows (`MaxLuminance` of that display); the brightness slider stops where SDR white reaches it, so SDR white never exceeds the peak.
 - With the checkbox off, the same session shows the stock SDR image at the Windows SDR white level: an instant A/B, no restart.
 
 ## Install
 
 1. Have IFreemz's [1.9.0-pre.3 release](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR/releases/tag/v1.9.0-pre.3) set up (plus the FSR 4 add-on if you use it). Copy that folder.
-2. Download the [latest RetroHDR release](https://github.com/zeroznet/shadPS4-Bloodborne-DLSS-FSR-RetroHDR/releases), check it (`sha256sum -c SHA256SUMS`), and put its `shadPS4.exe` into the copied folder.
+2. Download the [latest RetroHDR release](https://github.com/zeroznet/shadPS4-Bloodborne-DLSS-FSR-RetroHDR/releases), check it (`sha256sum -c SHA256SUMS`, or `Get-FileHash` on Windows), and put its `shadPS4.exe` into the copied folder.
 3. Add the folder in your launcher (QtLauncher: Version Manager → Add Custom).
 4. Delete `%APPDATA%\shadPS4\cache\CUSA03173` before the first run: a new exe is a new emulator version, and a mixed shader cache can hang startup.
 
