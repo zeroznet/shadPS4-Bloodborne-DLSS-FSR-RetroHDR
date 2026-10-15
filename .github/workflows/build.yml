@@ -6,6 +6,7 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ['v*-retrohdr.*']
     paths-ignore:
       - "documents/**"
       - "**/*.md"
@@ -107,3 +108,28 @@ jobs:
       with:
         name: shadPS4-exe-only-win64-${{ needs.get-info.outputs.shorthash }}
         path: ${{github.workspace}}/build/shadPS4.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [get-info, windows-sdl]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/download-artifact@v8
+      with:
+        name: shadPS4-exe-only-win64-${{ needs.get-info.outputs.shorthash }}
+        path: dist
+    - name: Package
+      run: |
+        cd dist
+        zip -9 "shadPS4-RetroHDR-${GITHUB_REF_NAME}-win64.zip" shadPS4.exe
+        sha256sum "shadPS4-RetroHDR-${GITHUB_REF_NAME}-win64.zip" > SHA256SUMS
+    - name: Create GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/SHA256SUMS \
+          --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" \
+          --notes-file .github/release-notes.md --prerelease
