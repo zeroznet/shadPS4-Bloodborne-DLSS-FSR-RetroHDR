@@ -10,11 +10,7 @@ Open work only. When an item is done, delete the line. Decisions live in the spe
 
 ## Now
 
-- [ ] **Ship RetroHDR v1.** Plan: `docs/superpowers/plans/2026-10-14-retro-hdr.md`. Done when the smoke document is merged and `v1.9.0-pre.3-retrohdr.1` is released.
-
-## Later
-
-- [ ] **Port to IFreemz 2.1.0-pre.** When it ships with the threaded renderer: rebase `main` onto the new tag, re-read `FindPresentFormat`, `post_process.frag`, the ImGui overlay pipeline and the F1 panel for drift, rebuild, smoke again.
+- [ ] **Port to IFreemz 2.1.0-pre.2.** Branch `port/2.1.0-pre.2` (code commits only, applies clean on upstream `exp-2.1`): CI build, smoke with the HDR meter, then a PR to IFreemz if issue #28 says yes.
 
 ## Backlog
 
