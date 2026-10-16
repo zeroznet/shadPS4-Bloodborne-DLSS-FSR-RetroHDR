@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 **Base:** IFreemz shadPS4-Bloodborne-DLSS-FSR `v1.9.0-pre.3` plus RetroHDR (Special K style SDR to HDR).
 
-**Install:** copy your IFreemz 1.9.0-pre.3 folder, replace `shadPS4.exe` with the one from the zip, add the folder in your launcher, and delete `%APPDATA%\shadPS4\cache\CUSA03173` before the first run. Usage: [README](https://github.com/zeroznet/shadPS4-Bloodborne-DLSS-FSR-RetroHDR#usage).
+**Install:** copy your IFreemz 1.9.0-pre.3 folder, replace `shadPS4.exe` with the one from the zip, add the folder in your launcher, and delete `%APPDATA%\shadPS4\cache\CUSA03173` before the first run. Usage: [README](https://github.com/zeroznet/shadPS4-Bloodborne-DLSS-FSR-RetroHDR).
 
 **Verify:**
 ```
