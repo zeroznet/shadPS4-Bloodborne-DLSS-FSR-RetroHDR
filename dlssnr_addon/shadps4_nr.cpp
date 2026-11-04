@@ -13,6 +13,7 @@
 #include <d3d12.h>
 #include <vulkan/vulkan.h>
 
+#include "nr_asi_wilsjo2.hpp"
 #include "nr_dlssnr_model.hpp"
 #include "nr_ini_network.hpp"
 #include "nr_pe_config.hpp"
@@ -77,6 +78,15 @@ void CopyText(char* out, size_t size, const std::string& text) {
 }
 
 } // namespace
+
+// NR Control's unit (linked for the model's reports, never opened here) asks the plugin's wilsjo2
+// style what it ran; that style is not part of this add-on, so it ran nothing.
+namespace nr::asi {
+void wilsjo2_present_spatial() {}
+nr::wilsjo2::SpatialLayout wilsjo2_spatial_layout(int) {
+    return {};
+}
+} // namespace nr::asi
 
 BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID) {
     // The model's root is its module's folder; shadPS4.exe's makes it find dlssnr-amd\ and
