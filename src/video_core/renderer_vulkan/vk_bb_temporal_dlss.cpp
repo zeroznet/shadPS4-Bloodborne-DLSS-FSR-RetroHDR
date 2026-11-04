@@ -33,6 +33,8 @@
 #include "video_core/host_shaders/bb_hud_layer_comp.h"
 #include "video_core/host_shaders/bb_hudless_dim_comp.h"
 #include "video_core/renderer_vulkan/vk_bb_library.h"
+#include "video_core/renderer_vulkan/vk_bb_neural_rendering.h"
+#include "video_core/renderer_vulkan/vk_bb_nr_settings.h"
 #include "video_core/renderer_vulkan/vk_bb_object_motion.h"
 #include "video_core/renderer_vulkan/vk_bb_resolution.h"
 #include "video_core/renderer_vulkan/vk_bb_stage_census.h"
@@ -108,6 +110,8 @@ BbDlssStatus BbTemporalDlssStatus() {
     copy.dlss_problem = ngx_problem;
     copy.fsr4_installed = Fsr4Addon::Present();
     copy.amd_fsr_label = AmdFsrLabel();
+    copy.nr_installed = BbNeuralRendering::Present();
+    copy.nr_small_model = BbNeuralRendering::SmallModelPresent();
     if (!BbTemporalDlssRequested())
         copy.reason =
             "No upscaler files were found next to " BB_LIBRARY_NAME("shadPS4.exe", "shadps4") ".";
@@ -439,6 +443,14 @@ enabled=1
 # or dlss, fsr4, fsr, amdfsr (AMD FSR 4.1, never picked by auto)
 upscaler=auto
 
+# DLSS 5 neural rendering on AMD before AMD FSR 4.1 (dlssnr-amd folder, RX 9000):
+# 1 = on; network auto, silver or small; scale 0.33 to 1 (the network's resolution);
+# intensity 0 to 2
+nr=0
+nr_network=auto
+nr_scale=0.67
+nr_intensity=1
+
 # DLSS model: 13 = M, 11 = K, 10 = J, 12 = L, 0 = NVIDIA default
 preset=13
 
@@ -495,6 +507,7 @@ struct Tune {
     bool menu_fix = true;
     bool auto_exposure = true;    // HDR input (decoupled UI): FSR computes the exposure
     bool texture_lod_bias = true; // sharper scene textures while upscaling (BbSceneMipBias)
+    BbNrSettings nr;              // DLSS 5 neural rendering before AMD FSR
 };
 
 enum class Backend { None, Dlss, Fsr, Fsr4, AmdFsr };
@@ -620,6 +633,13 @@ struct BbTemporalDlss::Impl {
     bool hud_layer_on{};                      // the last composite drew the HUD layer
     std::unique_ptr<OwnedImage> linear_color; // FSR 4 input
     std::unique_ptr<OwnedImage> sharpened;    // decoupled UI: the upscaled scene, sharpened
+    // Neural rendering: a copy of the upscaler's input the network rewrites in place (the input
+    // itself is read again by the HUD delta). Null without the add-on or for a format it can't
+    // write. After a failure it stays off for the run; upscaling goes on without it.
+    std::unique_ptr<OwnedImage> nr_color;
+    bool nr_was_active{};
+    bool nr_failed{};
+    std::string nr_failure;
     // Frame generation reads depth and motion when the frame is presented, after later frames
     // may have overwritten them: each upscaled frame copies them into the next slot.
     struct FrameGenSlot {
@@ -678,6 +698,8 @@ struct BbTemporalDlss::Impl {
             const auto key = line.substr(0, eq);
             const auto value = line.substr(eq + 1);
             const int number = std::atoi(value.c_str());
+            if (ParseBbNrSetting(key, value, next.nr))
+                continue;
             if (key == "enabled")
                 next.enabled = number != 0;
             else if (key == "jitter")
@@ -755,10 +777,98 @@ struct BbTemporalDlss::Impl {
         LOG_INFO(Render_Vulkan,
                  "[DLSS-TEMPORAL] Settings: enabled={} upscaler={} jitter={} sign=({},{}) "
                  "object_motion={} character_motion={} texture_lod_bias={} hud={} "
-                 "debug_motion={} quality={} output={}x{}",
+                 "debug_motion={} quality={} output={}x{} nr={} nr_network={} nr_scale={:.2f} "
+                 "nr_intensity={:.2f}",
                  tune.enabled, tune.upscaler, tune.jitter, tune.sign_x, tune.sign_y, tune.mirror,
                  tune.character_motion, tune.texture_lod_bias, tune.hud, tune.debug_motion,
-                 tune.quality, tune.output.width, tune.output.height);
+                 tune.quality, tune.output.width, tune.output.height, tune.nr.enabled,
+                 tune.nr.network, tune.nr.scale, tune.nr.intensity);
+    }
+
+    // The network on a copy of the upscaler's input, left in SHADER_READ_ONLY_OPTIMAL for it.
+    void RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command,
+                            OwnedImage& input, const DlssNgx::Resource& depth, vk::Extent2D out,
+                            bool reset) {
+        using S = vk::PipelineStageFlagBits2;
+        using A = vk::AccessFlagBits2;
+        const vk::ImageLayout source_layout = input.layout;
+        input.Transit(command, vk::ImageLayout::eTransferSrcOptimal, S::eCopy, A::eTransferRead);
+        nr_color->Transit(command, vk::ImageLayout::eTransferDstOptimal, S::eCopy,
+                          A::eTransferWrite);
+        const vk::ImageSubresourceLayers layers{vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+        command.copyImage(input.image.image, vk::ImageLayout::eTransferSrcOptimal,
+                          nr_color->image.image, vk::ImageLayout::eTransferDstOptimal,
+                          vk::ImageCopy{.srcSubresource = layers,
+                                        .dstSubresource = layers,
+                                        .extent = {input.extent.width, input.extent.height, 1}});
+        input.Transit(command, source_layout, S::eAllCommands, A::eMemoryRead);
+        nr_color->Transit(command, vk::ImageLayout::eGeneral, S::eAllCommands,
+                          A::eMemoryRead | A::eMemoryWrite);
+        const auto image = [](vk::Image handle, vk::Format format, vk::Extent2D extent,
+                              vk::ImageLayout layout, vk::ImageUsageFlags usage) {
+            return ShadNrImage{reinterpret_cast<uint64_t>(static_cast<VkImage>(handle)),
+                               static_cast<u32>(format),
+                               extent.width,
+                               extent.height,
+                               static_cast<u32>(layout),
+                               static_cast<u32>(usage)};
+        };
+        using U = vk::ImageUsageFlagBits;
+        const ShadNrFrame frame{
+            .color = image(nr_color->image.image, nr_color->format, nr_color->extent,
+                           vk::ImageLayout::eGeneral,
+                           U::eSampled | U::eStorage | U::eTransferSrc | U::eTransferDst),
+            .depth = image(depth.image, depth.format, depth.extent,
+                           vk::ImageLayout::eShaderReadOnlyOptimal, U::eSampled | U::eTransferSrc),
+            .motion = image(motion->image.image, motion->format, motion->extent,
+                            vk::ImageLayout::eShaderReadOnlyOptimal,
+                            U::eSampled | U::eStorage | U::eTransferSrc),
+            .width = input.extent.width,
+            .height = input.extent.height,
+            .output_width = out.width,
+            .output_height = out.height,
+            // Render pixels, as the upscalers take them.
+            .mv_scale_x = 1.0f,
+            .mv_scale_y = 1.0f,
+            .depth_inverted = tune.depth_inverted ? 1u : 0u,
+            .reset = reset ? 1u : 0u,
+        };
+        const ShadNrSettings settings{
+            BbNrNetwork(tune.nr, BbNeuralRendering::SmallModelPresent()), tune.nr.scale,
+            tune.nr.intensity};
+        if (!neural.Evaluate(command, frame, settings)) {
+            nr_failed = true;
+            nr_failure = neural.Status().message;
+            LOG_ERROR(Render_Vulkan, "[NR] Evaluation failed ({}); off for this run", nr_failure);
+        }
+        nr_color->Transit(command, vk::ImageLayout::eShaderReadOnlyOptimal, S::eAllCommands,
+                          A::eShaderRead);
+    }
+
+    // F1's line for neural rendering.
+    std::string NrState(BbNeuralRendering* neural) const {
+        if (!neural)
+            return "did not start (see the log)";
+        if (nr_failed)
+            return "failed: " + nr_failure;
+        if (!tune.nr.enabled)
+            return "off";
+        if (backend != Backend::AmdFsr)
+            return "needs AMD FSR";
+        if (!nr_color)
+            return "this colour format cannot be written by the network";
+        const ShadNrStatus nr = neural->Status();
+        switch (nr.state) {
+        case SHADNR_RUNNING:
+            return fmt::format("{} {}x{}, {:.1f} ms", static_cast<const char*>(nr.network),
+                               nr.width, nr.height, nr.network_ms);
+        case SHADNR_BUILDING:
+            return "building the network (the first start takes about 80 s)";
+        case SHADNR_FAILED:
+            return fmt::format("failed: {}", static_cast<const char*>(nr.message));
+        default:
+            return "starting";
+        }
     }
 
     void EnsurePipelines(const Instance& instance) {
@@ -1503,15 +1613,28 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
         upscaled->extent != out) {
         scheduler.Finish(); // owned images may still be in flight
         using U = vk::ImageUsageFlagBits;
+        // Neural rendering copies the upscaler's input (this or linear_color) into nr_color.
+        const bool neural = instance.GetNeuralRendering() != nullptr;
+        const vk::ImageUsageFlags copied = neural ? U::eTransferSrc : vk::ImageUsageFlags{};
         snapshot = std::make_unique<OwnedImage>(instance, color_format, in,
-                                                renodx ? U::eSampled | U::eStorage
-                                                       : U::eSampled | U::eTransferDst);
+                                                (renodx ? U::eSampled | U::eStorage
+                                                        : U::eSampled | U::eTransferDst) |
+                                                    copied);
         motion = std::make_unique<OwnedImage>(instance, vk::Format::eR16G16Sfloat, in,
                                               U::eSampled | U::eStorage | U::eTransferSrc);
         upscaled = std::make_unique<OwnedImage>(instance, vk::Format::eR16G16B16A16Sfloat, out,
                                                 U::eSampled | U::eStorage | U::eTransferSrc);
         linear_color = std::make_unique<OwnedImage>(instance, vk::Format::eR16G16B16A16Sfloat, in,
-                                                    U::eSampled | U::eStorage);
+                                                    U::eSampled | U::eStorage | copied);
+        const vk::Format nr_format = renodx ? vk::Format::eR16G16B16A16Sfloat : color_format;
+        const auto nr_features =
+            instance.GetPhysicalDevice().getFormatProperties(nr_format).optimalTilingFeatures;
+        const bool nr_writable =
+            neural && static_cast<bool>(nr_features & vk::FormatFeatureFlagBits::eStorageImage);
+        nr_color = nr_writable ? std::make_unique<OwnedImage>(
+                                     instance, nr_format, in,
+                                     U::eSampled | U::eStorage | U::eTransferSrc | U::eTransferDst)
+                               : nullptr;
         sharpened = upscale_to
                         ? std::make_unique<OwnedImage>(instance, vk::Format::eR16G16B16A16Sfloat,
                                                        out, U::eStorage | U::eTransferSrc)
@@ -1821,6 +1944,14 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
     upscaled_tone_mapped = renodx;
     const DlssNgx::Resource depth_resource{depth->backing->image.image, *depth_view.image_view,
                                            Range, vk::Format::eR32Sfloat, in};
+    // Neural rendering runs only before AMD FSR. Turning it on or off changes what the upscaler
+    // sees, so its history starts again.
+    auto* const neural = instance.GetNeuralRendering();
+    const bool nr_active =
+        backend == Backend::AmdFsr && tune.nr.enabled && neural && nr_color && !nr_failed;
+    if (nr_active != nr_was_active)
+        history_valid = false;
+    nr_was_active = nr_active;
     const bool reset = !history_valid;
     const DlssNgx::EvalDesc eval{(tune.swap ? applied[1] : applied[0]) * tune.sign_x,
                                  (tune.swap ? applied[0] : applied[1]) * tune.sign_y, reset,
@@ -1845,14 +1976,17 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
     } else {
         // FSR 4 waits for and tracks its own submissions through the scheduler: recorded here.
         const auto direct = scheduler.CommandBuffer();
+        OwnedImage& upscaler_input = *(linear ? linear_color : snapshot);
+        if (nr_active)
+            RunNeuralRendering(*neural, direct, upscaler_input, depth_resource, out, reset);
+        const auto input = (nr_active ? *nr_color : upscaler_input).Resource();
         success = backend == Backend::Fsr4
-                      ? fsr4->Evaluate(direct, (linear ? linear_color : snapshot)->Resource(),
-                                       depth_resource, motion->Resource(), upscaled->Resource(),
-                                       eval, FsrCamera(), hdr ? (tune.auto_exposure ? 1 : 2) : 0)
+                      ? fsr4->Evaluate(direct, input, depth_resource, motion->Resource(),
+                                       upscaled->Resource(), eval, FsrCamera(),
+                                       hdr ? (tune.auto_exposure ? 1 : 2) : 0)
                       : (backend == Backend::AmdFsr ? amd_fsr : fsr)
-                            ->Evaluate(direct, (linear ? linear_color : snapshot)->Resource(),
-                                       depth_resource, motion->Resource(), upscaled->Resource(),
-                                       eval, FsrCamera());
+                            ->Evaluate(direct, input, depth_resource, motion->Resource(),
+                                       upscaled->Resource(), eval, FsrCamera());
     }
     scheduler.GetDynamicState().Invalidate(); // the upscaler records its own Vulkan state
     if (!success) {
@@ -1954,6 +2088,7 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
         status.backend = BackendName(backend);
         status.preset = backend == Backend::Dlss ? tune.preset : 0;
         status.decoupled = upscale_to.has_value();
+        status.nr_state = NrState(neural);
         status.reason.clear();
     }
     {
