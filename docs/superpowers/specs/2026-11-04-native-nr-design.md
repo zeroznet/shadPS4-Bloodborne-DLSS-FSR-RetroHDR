@@ -110,10 +110,15 @@ Installed in Robert's play build `Downloads\bin\shadPS4-Bloodborne-DLSS-FSR-2.1.
   README like `amdfsr`.
 - **Failure handling:** a failed load, init or feature creation unloads NR and leaves upscaling untouched (the
   pattern the FSR 4 add-on and `amdfsr` use after commit 5a718613), logged once.
-- **Build of the core DLL:** a script in this repo (or a CI job) that clones the pinned tag into
-  `~/.cache/upstream-refs/mochizuki0323-DLSSNR-AMD/` and runs their build. Local WSL has no mingw or other Windows
-  toolchain today; installing `mingw-w64` needs Robert's approval (sudo). For the PR, decide with eFMann whether the
-  DLL ships in the release zip or users take it from mochizuki's release.
+- For the PR, decide with eFMann whether the core DLL ships in the release zip or users take it from mochizuki's
+  release.
+
+## Decided by Robert (build)
+
+- **The core DLL is built in CI, not locally** (no `mingw-w64` in WSL). A CI job on this fork checks out the
+  pinned mochizuki tag, installs mingw on the runner, runs their build for the NGX core and uploads
+  `dlssnr_core.dll` as an artifact next to the shadPS4 exe artifact. Local work in WSL is source reading and
+  editing only; every build and test exe comes from CI (Robert approves each push that triggers it).
 
 ## Success criteria
 
