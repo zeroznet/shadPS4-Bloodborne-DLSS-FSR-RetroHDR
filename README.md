@@ -124,6 +124,23 @@ the first release that runs it on Vulkan. Windows only.
 Delete the folder to remove it. FSR 3.1 and the FSR 4 add-on are unaffected. Tested on a
 Radeon RX 9070 XT (driver 26.10.1), 2560x1440 to 3840x2160.
 
+### Optional: DLSS 5 neural rendering on AMD
+
+The DLSS 5 neural rendering network as reimplemented for Radeon RX 9000 by
+[DLSSNR-AMD](https://gitlab.com/mochizuki0323/DLSSNR-AMD) (MIT), run on the render-resolution
+scene right before AMD FSR 4.1. Windows and RX 9000 only; it needs AMD FSR 4.1 (above).
+Nothing from NVIDIA is included: the model comes from your own `nvngx_dlssnr.dll`.
+
+1. Run DLSSNR-AMD 0.0.8.2's Windows installer on any folder to extract the model from your
+   `nvngx_dlssnr.dll`, then copy its `dlssnr-amd` folder and `dlssnr-amd.ini` next to
+   `shadPS4.exe`.
+2. Copy `shadps4_nr.dll` from this build's NR add-on download into that `dlssnr-amd` folder.
+3. Pick AMD FSR in F1 and tick *Neural rendering*, or set `nr=1` in `dlss.ini`. F1 also sets the
+   network, its resolution (`nr_scale`, 0.33 to 1) and the intensity (`nr_intensity`, 0 to 2).
+
+The first start builds the network for about 80 seconds while the game runs normally; F1 shows
+when it is ready and what it costs. Delete `dlssnr-amd\shadps4_nr.dll` to remove it.
+
 ### Frame generation
 
 Tick *Frame generation* in F1 and restart. The game then shows generated frames between the ones
