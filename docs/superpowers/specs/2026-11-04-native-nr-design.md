@@ -82,21 +82,9 @@ Installed in Robert's play build `Downloads\bin\shadPS4-Bloodborne-DLSS-FSR-2.1.
 
 ## My calls (Robert can override)
 
-- **Runtime boundary: the NGX core DLL route.** Build mochizuki's NGX core (`build_optiscaler_nr.sh` makes
-  `_nvngx.dll` from `windows/src/pe/nr_ngx_core.cpp` + `windows/src/core/*`) with their mingw scripts, ship it
-  as `dlssnr-amd\dlssnr_core.dll` (not `_nvngx.dll`: see their ARCHITECTURE.md on Streamline). shadPS4 loads it
-  optionally (like `amd_fsr\`) and calls its `NVSDK_NGX_VULKAN_Init / CreateFeature / EvaluateFeature`
-  (feature 18 = DLSSNR, `DLSSNR.*` parameters) with the parameter ABI from their MIT header
-  `windows/src/pe/nr_ngx_abi.hpp` (vendored with its licence). It records into our command buffer on our device.
-  Alternative if the NGX route fights us: their `EngineFrame` API in `windows/src/core/nr_runtime.hpp` behind a
-  small C wrapper DLL of our own. Decide after reading `nr_ngx_core.cpp` (evaluate parameters, layouts it expects,
-  how it finds its data folder), not before.
-- **Data folder:** `dlssnr-amd\` next to `shadPS4.exe`, laid out as mochizuki's installer leaves it (`dlssnr.bin`,
-  `dlssnr-small.bin` if any, `aco\`, `shaders\`, `int4\`, `lang\`), so users copy it from his package after running
-  his extractor. The core reads its own `dlssnr-amd.ini`; our F1 settings override the keys we expose.
-- **Gating:** NR exists only when `dlssnr-amd\dlssnr_core.dll` and a model file exist. Only then enable the extra
-  device feature (`vulkanMemoryModel`) and the two extensions; also enable `VK_KHR_pipeline_binary` if the device
-  has it (unlocks ACO for INT4 mixed; verify that is the reason the plugin refused it).
+- **Runtime boundary, data folder, gating:** superseded after reading the pinned tag; see "Decisions changed
+  from the spec" in `docs/superpowers/plans/2026-11-04-native-nr.md` (own `dlssnr-amd\shadps4_nr.dll` over the
+  model's `create_vk_asi` / `evaluate_vk_asi`, device made through `create_with_network`).
 - **Where:** in `vk_bb_temporal_dlss.cpp`, just before the upscaler `Evaluate` (around line 1828, the block that
   picks `ngx`, `fsr4`, `amd_fsr`, `fsr`). Input: `(linear ? linear_color : snapshot)`, `depth_resource`,
   `motion->Resource()`, jitter and reset from `eval`. Write NR's result in place or into a second render-size image

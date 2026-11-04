@@ -525,3 +525,50 @@ jobs:
         if [[ "$tag" == *-* ]]; then prerelease="--prerelease"; fi
         gh release create "$tag" dist/* --repo "${{ github.repository }}" --draft --verify-tag \
           --title "$tag" --notes-file notes.md $prerelease
+
+  # dlssnr-amd/shadps4_nr.dll, the optional DLSS 5 neural rendering add-on: mochizuki0323's
+  # DLSSNR-AMD (MIT) built with mingw-w64 as that project builds its Windows DLLs. Its version is a
+  # deliberate pin; bump the tag and the commit together.
+  windows-nr:
+    runs-on: ubuntu-24.04
+    needs: get-info
+    env:
+      NR_TAG: v0.0.8.2
+      NR_COMMIT: c53878b5f0ee1656e740fdbbfd52994d02fe7bd5
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install
+      run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix
+
+    - name: Get DLSSNR-AMD
+      run: |
+        git clone --depth 1 --branch "$NR_TAG" https://gitlab.com/mochizuki0323/DLSSNR-AMD.git nr-src
+        test "$(git -C nr-src rev-parse HEAD)" = "$NR_COMMIT"
+
+    - name: Cache DLSSNR-AMD dependencies
+      uses: actions/cache@v5
+      with:
+        path: |
+          nr-src/toolchain
+          nr-src/artifacts/ref
+        key: nr-deps-${{ env.NR_COMMIT }}
+
+    - name: Build
+      run: bash dlssnr_addon/build.sh nr-src build-nr
+
+    - name: Package
+      run: |
+        set -e
+        mkdir -p pkg/dlssnr-amd
+        cp build-nr/shadps4_nr.dll pkg/dlssnr-amd/
+        x86_64-w64-mingw32-strip --strip-unneeded pkg/dlssnr-amd/shadps4_nr.dll
+        cp nr-src/LICENSE pkg/dlssnr-amd/LICENSE-DLSSNR-AMD-MIT.txt
+        cp nr-src/artifacts/ref/DLSS5-Feeder/external/minhook/LICENSE.txt pkg/dlssnr-amd/LICENSE-MinHook.txt
+        cp nr-src/toolchain/imgui-nr/LICENSE.txt pkg/dlssnr-amd/LICENSE-imgui.txt
+
+    - name: Upload NR add-on
+      uses: actions/upload-artifact@v7
+      with:
+        name: shadPS4-Bloodborne-NR-addon-win64-${{ needs.get-info.outputs.shorthash }}
+        path: pkg
