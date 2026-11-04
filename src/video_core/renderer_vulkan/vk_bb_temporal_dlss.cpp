@@ -786,9 +786,8 @@ struct BbTemporalDlss::Impl {
     }
 
     // The network on a copy of the upscaler's input, left in SHADER_READ_ONLY_OPTIMAL for it.
-    void RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command,
-                            OwnedImage& input, const DlssNgx::Resource& depth, vk::Extent2D out,
-                            bool reset) {
+    void RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command, OwnedImage& input,
+                            const DlssNgx::Resource& depth, vk::Extent2D out, bool reset) {
         using S = vk::PipelineStageFlagBits2;
         using A = vk::AccessFlagBits2;
         const vk::ImageLayout source_layout = input.layout;
@@ -833,9 +832,8 @@ struct BbTemporalDlss::Impl {
             .depth_inverted = tune.depth_inverted ? 1u : 0u,
             .reset = reset ? 1u : 0u,
         };
-        const ShadNrSettings settings{
-            BbNrNetwork(tune.nr, BbNeuralRendering::SmallModelPresent()), tune.nr.scale,
-            tune.nr.intensity};
+        const ShadNrSettings settings{BbNrNetwork(tune.nr, BbNeuralRendering::SmallModelPresent()),
+                                      tune.nr.scale, tune.nr.intensity};
         if (!neural.Evaluate(command, frame, settings)) {
             nr_failed = true;
             nr_failure = neural.Status().message;
@@ -1616,10 +1614,9 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
         // Neural rendering copies the upscaler's input (this or linear_color) into nr_color.
         const bool neural = instance.GetNeuralRendering() != nullptr;
         const vk::ImageUsageFlags copied = neural ? U::eTransferSrc : vk::ImageUsageFlags{};
-        snapshot = std::make_unique<OwnedImage>(instance, color_format, in,
-                                                (renodx ? U::eSampled | U::eStorage
-                                                        : U::eSampled | U::eTransferDst) |
-                                                    copied);
+        snapshot = std::make_unique<OwnedImage>(
+            instance, color_format, in,
+            (renodx ? U::eSampled | U::eStorage : U::eSampled | U::eTransferDst) | copied);
         motion = std::make_unique<OwnedImage>(instance, vk::Format::eR16G16Sfloat, in,
                                               U::eSampled | U::eStorage | U::eTransferSrc);
         upscaled = std::make_unique<OwnedImage>(instance, vk::Format::eR16G16B16A16Sfloat, out,
@@ -1631,9 +1628,9 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
             instance.GetPhysicalDevice().getFormatProperties(nr_format).optimalTilingFeatures;
         const bool nr_writable =
             neural && static_cast<bool>(nr_features & vk::FormatFeatureFlagBits::eStorageImage);
-        nr_color = nr_writable ? std::make_unique<OwnedImage>(
-                                     instance, nr_format, in,
-                                     U::eSampled | U::eStorage | U::eTransferSrc | U::eTransferDst)
+        nr_color = nr_writable ? std::make_unique<OwnedImage>(instance, nr_format, in,
+                                                              U::eSampled | U::eStorage |
+                                                                  U::eTransferSrc | U::eTransferDst)
                                : nullptr;
         sharpened = upscale_to
                         ? std::make_unique<OwnedImage>(instance, vk::Format::eR16G16B16A16Sfloat,

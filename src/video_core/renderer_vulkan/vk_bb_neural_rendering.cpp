@@ -72,16 +72,16 @@ std::unique_ptr<BbNeuralRendering> BbNeuralRendering::Load() {
     auto nr = std::unique_ptr<BbNeuralRendering>{new BbNeuralRendering};
     nr->module = BbLibrary::Load(AddonDirectory() / "shadps4_nr.dll");
     const auto find = [&](const char* name) { return BbLibrary::Find(nr->module, name); };
-    nr->api = std::make_unique<Api>(Api{
-        reinterpret_cast<decltype(Api::abi_version)>(find("shadps4_nr_abi_version")),
-        reinterpret_cast<decltype(Api::create_device)>(find("shadps4_nr_create_device")),
-        reinterpret_cast<decltype(Api::init)>(find("shadps4_nr_init")),
-        reinterpret_cast<decltype(Api::evaluate)>(find("shadps4_nr_evaluate")),
-        reinterpret_cast<decltype(Api::status)>(find("shadps4_nr_status")),
-        reinterpret_cast<decltype(Api::shutdown)>(find("shadps4_nr_shutdown"))});
+    nr->api = std::make_unique<Api>(
+        Api{reinterpret_cast<decltype(Api::abi_version)>(find("shadps4_nr_abi_version")),
+            reinterpret_cast<decltype(Api::create_device)>(find("shadps4_nr_create_device")),
+            reinterpret_cast<decltype(Api::init)>(find("shadps4_nr_init")),
+            reinterpret_cast<decltype(Api::evaluate)>(find("shadps4_nr_evaluate")),
+            reinterpret_cast<decltype(Api::status)>(find("shadps4_nr_status")),
+            reinterpret_cast<decltype(Api::shutdown)>(find("shadps4_nr_shutdown"))});
     const auto& a = *nr->api;
-    if (!a.abi_version || !a.create_device || !a.init || !a.evaluate || !a.status ||
-        !a.shutdown || a.abi_version() != SHADPS4_NR_ABI_VERSION) {
+    if (!a.abi_version || !a.create_device || !a.init || !a.evaluate || !a.status || !a.shutdown ||
+        a.abi_version() != SHADPS4_NR_ABI_VERSION) {
         LOG_WARNING(Render_Vulkan, "[NR] dlssnr-amd/shadps4_nr.dll is missing or from another "
                                    "version; neural rendering off");
         nr->api.reset();
@@ -110,8 +110,8 @@ vk::Result BbNeuralRendering::CreateDevice(vk::PhysicalDevice physical,
     return result;
 }
 
-bool BbNeuralRendering::Init(vk::Instance instance, vk::PhysicalDevice physical,
-                             vk::Device device, u32 queue_family) {
+bool BbNeuralRendering::Init(vk::Instance instance, vk::PhysicalDevice physical, vk::Device device,
+                             u32 queue_family) {
     const auto result =
         api->init(static_cast<VkInstance>(instance), static_cast<VkPhysicalDevice>(physical),
                   static_cast<VkDevice>(device), queue_family, LockQueue, UnlockQueue, nullptr);
