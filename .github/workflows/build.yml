@@ -535,6 +535,9 @@ jobs:
     env:
       NR_TAG: v0.0.8.2
       NR_COMMIT: c53878b5f0ee1656e740fdbbfd52994d02fe7bd5
+      # That release's Windows package: its network data, model extractor and settings file.
+      NR_PACKAGE: https://gitlab.com/mochizuki0323/DLSSNR-AMD/-/releases/v0.0.8.2/downloads/DLSSNR-AMD-Vulkan-Windows-0.0.8.2-preview-x86_64.zip
+      NR_PACKAGE_SHA256: 85ca7911348a160b10c1a9456a8ef95332468d8402c11c4c4ea6593a7561989f
     steps:
     - uses: actions/checkout@v6
 
@@ -557,10 +560,22 @@ jobs:
     - name: Build
       run: bash dlssnr_addon/build.sh nr-src build-nr
 
+    # The add-on folder goes next to shadPS4.exe as it is: dlssnr-amd\ (the network as DLSSNR-AMD's
+    # installer lays it out, shadps4_nr.dll and install-model.bat) and dlssnr-amd.ini. No model:
+    # install-model.bat makes it from the user's own nvngx_dlssnr.dll.
     - name: Package
       run: |
         set -e
-        mkdir -p pkg/dlssnr-amd
+        curl -fsSL --retry 3 -o nr-package.zip "$NR_PACKAGE"
+        echo "$NR_PACKAGE_SHA256  nr-package.zip" | sha256sum -c -
+        unzip -q nr-package.zip 'dlssnr-amd/*' 'model-tools/dlssnr_extract_model.exe' \
+          'ini/dlssnr-amd-optiscaler-renodx.ini' -d nr-package
+        mkdir -p pkg
+        cp -r nr-package/dlssnr-amd pkg/
+        mkdir -p pkg/dlssnr-amd/model-tools
+        cp nr-package/model-tools/dlssnr_extract_model.exe pkg/dlssnr-amd/model-tools/
+        cp nr-package/ini/dlssnr-amd-optiscaler-renodx.ini pkg/dlssnr-amd.ini
+        cp dlssnr_addon/install-model.bat dlssnr_addon/install-model.ps1 pkg/dlssnr-amd/
         cp build-nr/shadps4_nr.dll pkg/dlssnr-amd/
         x86_64-w64-mingw32-strip --strip-unneeded pkg/dlssnr-amd/shadps4_nr.dll
         cp nr-src/LICENSE pkg/dlssnr-amd/LICENSE-DLSSNR-AMD-MIT.txt

@@ -131,10 +131,11 @@ The DLSS 5 neural rendering network as reimplemented for Radeon RX 9000 by
 scene right before AMD FSR 4.1. Windows and RX 9000 only; it needs AMD FSR 4.1 (above).
 Nothing from NVIDIA is included: the model comes from your own `nvngx_dlssnr.dll`.
 
-1. Run DLSSNR-AMD 0.0.8.2's Windows installer on any folder to extract the model from your
-   `nvngx_dlssnr.dll`, then copy its `dlssnr-amd` folder and `dlssnr-amd.ini` next to
-   `shadPS4.exe`.
-2. Copy `shadps4_nr.dll` from this build's NR add-on download into that `dlssnr-amd` folder.
+1. Unpack this build's NR add-on download next to `shadPS4.exe` (its `dlssnr-amd` folder and
+   `dlssnr-amd.ini`).
+2. Drop your `nvngx_dlssnr.dll` (NVIDIA's own 310.9.16, for example from NBA 2K27, or 310.8.0;
+   modified copies are refused) or a zip that contains it on `dlssnr-amd\install-model.bat`. It
+   makes the model in that folder; 310.9.16 gives both networks, 310.8.0 CC_SILVER_AARDWOLD only.
 3. Pick AMD FSR in F1 and tick *Neural rendering*, or set `nr=1` in `dlss.ini`. F1 also sets the
    network, its resolution (`nr_scale`, 0.33 to 1) and the intensity (`nr_intensity`, 0 to 2).
 
