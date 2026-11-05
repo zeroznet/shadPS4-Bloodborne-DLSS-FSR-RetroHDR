@@ -865,7 +865,7 @@ struct BbTemporalDlss::Impl {
         case SHADNR_FAILED:
             return fmt::format("failed: {}", static_cast<const char*>(nr.message));
         default:
-            return "starting";
+            return nr.message[0] ? static_cast<const char*>(nr.message) : "starting";
         }
     }
 
@@ -2828,6 +2828,7 @@ void BbTemporalDlss::Shutdown(const Instance& instance, Scheduler& scheduler) {
     s.decoupled_hudless.clear();
     s.sharpened.reset();
     s.linear_color.reset();
+    s.nr_color.reset();
     s.coefficients.reset();
     s.coverage.reset();
     s.dimming.reset();

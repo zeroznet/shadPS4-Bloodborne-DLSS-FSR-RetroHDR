@@ -40,12 +40,28 @@ constexpr bool ParseBbNrDecimal(std::string_view text, float& out) {
     return digits;
 }
 
+// On/off as std::atoi reads it, like dlss.ini's other switches: leading spaces, then a whole
+// number; "off", "" or "0" are off.
+constexpr bool ParseBbNrSwitch(std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
+        text.remove_prefix(1);
+    if (!text.empty() && (text.front() == '+' || text.front() == '-'))
+        text.remove_prefix(1);
+    for (const char c : text) {
+        if (c < '0' || c > '9')
+            return false;
+        if (c != '0')
+            return true;
+    }
+    return false;
+}
+
 // True when key is one of the neural rendering keys; values out of range are clamped, unreadable
 // ones keep the current value.
 constexpr bool ParseBbNrSetting(std::string_view key, std::string_view value, BbNrSettings& out) {
     float number{};
     if (key == "nr") {
-        out.enabled = value != "0";
+        out.enabled = ParseBbNrSwitch(value);
     } else if (key == "nr_network") {
         out.network = value.starts_with("small") ? 0 : value.starts_with("silver") ? 1 : -1;
     } else if (key == "nr_scale") {
@@ -68,6 +84,18 @@ constexpr int BbNrNetwork(const BbNrSettings& settings, bool small_present) {
 static_assert([] {
     BbNrSettings s;
     return ParseBbNrSetting("nr", "1", s) && s.enabled;
+}());
+static_assert([] {
+    BbNrSettings s{.enabled = true};
+    return ParseBbNrSetting("nr", "off", s) && !s.enabled;
+}());
+static_assert([] {
+    BbNrSettings s{.enabled = true};
+    return ParseBbNrSetting("nr", " 0", s) && !s.enabled;
+}());
+static_assert([] {
+    BbNrSettings s;
+    return ParseBbNrSetting("nr", " 1", s) && s.enabled;
 }());
 static_assert([] {
     BbNrSettings s;
