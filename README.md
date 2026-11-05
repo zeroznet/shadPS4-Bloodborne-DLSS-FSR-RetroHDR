@@ -140,7 +140,9 @@ Nothing from NVIDIA is included: the model comes from your own `nvngx_dlssnr.dll
    network, its resolution (`nr_scale`, 0.33 to 1) and the intensity (`nr_intensity`, 0 to 2).
 
 The first start builds the network for about 80 seconds while the game runs normally; F1 shows
-when it is ready and what it costs. Delete `dlssnr-amd\shadps4_nr.dll` to remove it.
+when it is ready and what it costs. Delete `dlssnr-amd\shadps4_nr.dll` to remove it. While that
+file is there, the GPU device is set up for the network even with *Neural rendering* off in F1,
+which only skips the pass; to compare a problem without NR, rename the file instead.
 
 ### Frame generation
 
