@@ -26,6 +26,7 @@
 #include "shadps4_nr.h"
 
 #include <cstdio>
+#include <exception>
 #include <mutex>
 #include <string>
 
@@ -77,6 +78,19 @@ void CopyText(char* out, size_t size, const std::string& text) {
     std::snprintf(out, size, "%s", text.c_str());
 }
 
+// An exception must not cross the C interface into shadPS4's MSVC code, where it ends the process.
+template <typename Result, typename Body>
+Result Guarded(const char* call, Result failed, Body&& body) {
+    try {
+        return body();
+    } catch (const std::exception& e) {
+        nr::pe::log("[shadps4_nr] %s: %s", call, e.what());
+    } catch (...) {
+        nr::pe::log("[shadps4_nr] %s: unknown exception", call);
+    }
+    return failed;
+}
+
 } // namespace
 
 // NR Control's unit (linked for the model's reports, never opened here) asks the plugin's wilsjo2
@@ -88,11 +102,15 @@ nr::wilsjo2::SpatialLayout wilsjo2_spatial_layout(int) {
 }
 } // namespace nr::asi
 
-BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID) {
+BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID reserved) {
     // The model's root is its module's folder; shadPS4.exe's makes it find dlssnr-amd\ and
     // dlssnr-amd.ini where mochizuki's installer puts them, beside the game.
     if (reason == DLL_PROCESS_ATTACH)
         nr::pe::set_module(GetModuleHandleW(nullptr));
+    // ExitProcess has already ended the model's threads: its session is left as it is, as the
+    // plugin's DllMain does, since destroying it would wait for them forever.
+    else if (reason == DLL_PROCESS_DETACH && reserved)
+        nr::dlssnr::abandon_at_exit();
     return TRUE;
 }
 
@@ -107,102 +125,114 @@ SHADPS4_NR_API VkResult shadps4_nr_create_device(PFN_vkCreateDevice create,
                                                  const VkDeviceCreateInfo* info,
                                                  const VkAllocationCallbacks* allocator,
                                                  VkDevice* out, uint32_t* features_added) {
-    nr_vk_load();
-    bool added = false;
-    const VkResult result =
-        nr::pe::vkdevice::create_with_network(create, physical, info, allocator, out, &added);
-    if (features_added)
-        *features_added = added ? 1u : 0u;
-    return result;
+    return Guarded("shadps4_nr_create_device", VK_ERROR_INITIALIZATION_FAILED, [&]() -> VkResult {
+        nr_vk_load();
+        bool added = false;
+        const VkResult result =
+            nr::pe::vkdevice::create_with_network(create, physical, info, allocator, out, &added);
+        if (features_added)
+            *features_added = added ? 1u : 0u;
+        return result;
+    });
 }
 
 SHADPS4_NR_API int32_t shadps4_nr_init(VkInstance instance, VkPhysicalDevice physical,
                                        VkDevice device, uint32_t queue_family,
                                        ShadNrQueueLock lock, ShadNrQueueLock unlock,
                                        void* context) {
-    std::lock_guard<std::mutex> guard(g_lock);
-    nr_vk_load();
-    nr::pe::vkdevice::note_device(instance, physical, device, {queue_family});
-    if (nr::dlssnr::vk_init(instance, physical, device) != int(NVSDK_NGX_Result_Success))
-        return -1;
-    // After vk_init: Session::set_vulkan_queue, which vk_init calls, clears any lock set before.
-    nr::dlssnr::vk_queue_lock([lock, context] { lock(context); },
-                              [unlock, context] { unlock(context); });
-    return 0;
+    return Guarded("shadps4_nr_init", int32_t(-1), [&]() -> int32_t {
+        std::lock_guard<std::mutex> guard(g_lock);
+        nr_vk_load();
+        nr::pe::vkdevice::note_device(instance, physical, device, {queue_family});
+        if (nr::dlssnr::vk_init(instance, physical, device) != int(NVSDK_NGX_Result_Success))
+            return -1;
+        // After vk_init: Session::set_vulkan_queue, which vk_init calls, clears any lock set
+        // before.
+        nr::dlssnr::vk_queue_lock([lock, context] { lock(context); },
+                                  [unlock, context] { unlock(context); });
+        return 0;
+    });
 }
 
 SHADPS4_NR_API int32_t shadps4_nr_evaluate(VkCommandBuffer cmd, const ShadNrFrame* frame,
                                            const ShadNrSettings* settings) {
-    std::lock_guard<std::mutex> guard(g_lock);
-    if (!cmd || !frame || !settings || !frame->width || !frame->height)
-        return -1;
-    if (!g_feature || g_width != frame->width || g_height != frame->height) {
-        ReleaseFeature();
-        int result = 0;
-        g_feature = nr::dlssnr::create_vk_asi(frame->width, frame->height, &result);
-        if (!g_feature) {
-            nr::pe::log("[shadps4_nr] feature %ux%u could not be made (0x%08X)", frame->width,
-                        frame->height, unsigned(result));
+    return Guarded("shadps4_nr_evaluate", int32_t(-1), [&]() -> int32_t {
+        std::lock_guard<std::mutex> guard(g_lock);
+        if (!cmd || !frame || !settings || !frame->width || !frame->height)
             return -1;
+        if (!g_feature || g_width != frame->width || g_height != frame->height) {
+            ReleaseFeature();
+            int result = 0;
+            g_feature = nr::dlssnr::create_vk_asi(frame->width, frame->height, &result);
+            if (!g_feature) {
+                nr::pe::log("[shadps4_nr] feature %ux%u could not be made (0x%08X)", frame->width,
+                            frame->height, unsigned(result));
+                return -1;
+            }
+            g_width = frame->width;
+            g_height = frame->height;
         }
-        g_width = frame->width;
-        g_height = frame->height;
-    }
-    nr::renodx::Settings values = RenoDXSettings();
-    values.intensity = settings->intensity;
-    values.resolution_scale = settings->scale;
-    g_network = settings->network;
+        nr::renodx::Settings values = RenoDXSettings();
+        values.intensity = settings->intensity;
+        values.resolution_scale = settings->scale;
+        g_network = settings->network;
 
-    namespace route = nr::pe::renodx_route;
-    const uint32_t w = frame->width, h = frame->height;
-    route::note_pass(0u, 1.0f, w, h, frame->output_width, frame->output_height);
-    route::Frame run;
-    run.before_upscale = true;
-    route::begin_run(run);
-    route::note_encode(false, w, h);
-    const nr::dlssnr::VkImageRef color = ImageRef(frame->color);
-    const nr::dlssnr::Rect full{0, 0, w, h};
-    bool ran = false;
-    int result = 0;
-    {
-        route::CallStyle style(true);
-        route::CallSettings call_settings(&values);
-        route::CallNetwork network(settings->network);
-        result = nr::dlssnr::evaluate_vk_asi(
-            cmd, g_feature, color, color, ImageRef(frame->depth), ImageRef(frame->motion), w, h,
-            full, full, int(frame->depth_inverted), int(frame->reset), nr::dlssnr::Controls6{},
-            frame->mv_scale_x, frame->mv_scale_y, &ran);
-    }
-    route::end_run();
-    g_ran = ran;
-    bool failed = false;
-    nr::dlssnr::with_vk_session([&](nr::pe::Session& session) { failed = session.failed(); });
-    return result == int(NVSDK_NGX_Result_Success) && !failed ? 0 : -1;
+        namespace route = nr::pe::renodx_route;
+        const uint32_t w = frame->width, h = frame->height;
+        route::note_pass(0u, 1.0f, w, h, frame->output_width, frame->output_height);
+        route::Frame run;
+        run.before_upscale = true;
+        route::begin_run(run);
+        route::note_encode(false, w, h);
+        const nr::dlssnr::VkImageRef color = ImageRef(frame->color);
+        const nr::dlssnr::Rect full{0, 0, w, h};
+        bool ran = false;
+        int result = 0;
+        {
+            route::CallStyle style(true);
+            route::CallSettings call_settings(&values);
+            route::CallNetwork network(settings->network);
+            result = nr::dlssnr::evaluate_vk_asi(
+                cmd, g_feature, color, color, ImageRef(frame->depth), ImageRef(frame->motion), w, h,
+                full, full, int(frame->depth_inverted), int(frame->reset), nr::dlssnr::Controls6{},
+                frame->mv_scale_x, frame->mv_scale_y, &ran);
+        }
+        route::end_run();
+        g_ran = ran;
+        bool failed = false;
+        nr::dlssnr::with_vk_session([&](nr::pe::Session& session) { failed = session.failed(); });
+        return result == int(NVSDK_NGX_Result_Success) && !failed ? 0 : -1;
+    });
 }
 
 SHADPS4_NR_API void shadps4_nr_status(ShadNrStatus* out) {
-    if (!out)
-        return;
-    std::lock_guard<std::mutex> guard(g_lock);
-    *out = ShadNrStatus{};
-    out->width = g_width;
-    out->height = g_height;
-    CopyText(out->network, sizeof out->network, nr::network_codename(g_network));
-    nr::dlssnr::with_vk_session([&](nr::pe::Session& session) {
-        out->state = session.failed()     ? SHADNR_FAILED
-                     : g_ran              ? SHADNR_RUNNING
-                     : session.building() ? SHADNR_BUILDING
-                                          : SHADNR_IDLE;
-        out->network_ms = session.network_ms();
-        out->gpu_ms = session.gpu_ms();
-        CopyText(out->message, sizeof out->message, session.status());
+    Guarded("shadps4_nr_status", 0, [&]() -> int {
+        if (!out)
+            return 0;
+        std::lock_guard<std::mutex> guard(g_lock);
+        *out = ShadNrStatus{};
+        CopyText(out->network, sizeof out->network, nr::network_codename(g_network));
+        nr::dlssnr::with_vk_session([&](nr::pe::Session& session) {
+            out->state = session.failed()     ? SHADNR_FAILED
+                         : g_ran              ? SHADNR_RUNNING
+                         : session.building() ? SHADNR_BUILDING
+                                              : SHADNR_IDLE;
+            session.network_size(&out->width, &out->height);
+            out->network_ms = session.network_ms();
+            out->gpu_ms = session.gpu_ms();
+            CopyText(out->message, sizeof out->message, session.status());
+        });
+        return 0;
     });
 }
 
 SHADPS4_NR_API void shadps4_nr_shutdown(void) {
-    std::lock_guard<std::mutex> guard(g_lock);
-    ReleaseFeature();
-    nr::dlssnr::vk_device_destroyed();
+    Guarded("shadps4_nr_shutdown", 0, [&]() -> int {
+        std::lock_guard<std::mutex> guard(g_lock);
+        ReleaseFeature();
+        nr::dlssnr::vk_device_destroyed();
+        return 0;
+    });
 }
 
 } // extern "C"

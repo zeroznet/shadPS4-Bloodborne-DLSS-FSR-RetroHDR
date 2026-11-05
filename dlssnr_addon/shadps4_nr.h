@@ -50,7 +50,7 @@ enum { SHADNR_IDLE = 0, SHADNR_BUILDING = 1, SHADNR_RUNNING = 2, SHADNR_FAILED =
 typedef struct ShadNrStatus {
     uint32_t state;
     float network_ms, gpu_ms;
-    uint32_t width, height; // the frame of the latest evaluation
+    uint32_t width, height; // the running network's extent (0 x 0 before one runs)
     char network[32];
     char message[224];
 } ShadNrStatus;
@@ -73,7 +73,8 @@ SHADPS4_NR_API int32_t shadps4_nr_init(VkInstance instance, VkPhysicalDevice phy
 SHADPS4_NR_API int32_t shadps4_nr_evaluate(VkCommandBuffer cmd, const ShadNrFrame* frame,
                                            const ShadNrSettings* settings);
 SHADPS4_NR_API void shadps4_nr_status(ShadNrStatus* out);
-// Waits for the device to be idle and drops the session; call before the device is destroyed.
+// Waits for the model's queue work to finish and drops the session; call before the device is
+// destroyed.
 SHADPS4_NR_API void shadps4_nr_shutdown(void);
 
 #ifdef __cplusplus

@@ -94,7 +94,10 @@ std::unique_ptr<BbNeuralRendering> BbNeuralRendering::Load() {
 BbNeuralRendering::~BbNeuralRendering() {
     if (api)
         api->shutdown();
-    BbLibrary::Free(module);
+    // Once the device was made through it, the model's detached threads may still run its code:
+    // the DLL stays loaded until the process ends.
+    if (!device_made)
+        BbLibrary::Free(module);
 }
 
 vk::Result BbNeuralRendering::CreateDevice(vk::PhysicalDevice physical,
@@ -104,6 +107,7 @@ vk::Result BbNeuralRendering::CreateDevice(vk::PhysicalDevice physical,
     const auto result = static_cast<vk::Result>(api->create_device(
         VULKAN_HPP_DEFAULT_DISPATCHER.vkCreateDevice, static_cast<VkPhysicalDevice>(physical),
         &static_cast<const VkDeviceCreateInfo&>(info), nullptr, &device, &added));
+    device_made = true;
     out = vk::Device{device};
     LOG_INFO(Render_Vulkan, "[NR] Device created {} the network's features",
              added ? "with" : "without");

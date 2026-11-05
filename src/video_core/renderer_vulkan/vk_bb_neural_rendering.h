@@ -40,6 +40,7 @@ private:
     struct Api;
     void* module{};
     std::unique_ptr<Api> api;
+    bool device_made{};
 };
 
 } // namespace Vulkan
