@@ -528,7 +528,7 @@ jobs:
 
   # dlssnr-amd/shadps4_nr.dll, the optional DLSS 5 neural rendering add-on: mochizuki0323's
   # DLSSNR-AMD (MIT) built with mingw-w64 as that project builds its Windows DLLs. Its version is a
-  # deliberate pin; bump the tag and the commit together.
+  # deliberate pin; bump NR_TAG, NR_COMMIT, NR_PACKAGE and NR_PACKAGE_SHA256 together.
   windows-nr:
     runs-on: ubuntu-24.04
     needs: get-info
@@ -581,6 +581,8 @@ jobs:
         cp nr-src/LICENSE pkg/dlssnr-amd/LICENSE-DLSSNR-AMD-MIT.txt
         cp nr-src/artifacts/ref/DLSS5-Feeder/external/minhook/LICENSE.txt pkg/dlssnr-amd/LICENSE-MinHook.txt
         cp nr-src/toolchain/imgui-nr/LICENSE.txt pkg/dlssnr-amd/LICENSE-imgui.txt
+        cp nr-src/toolchain/fonts/inter-4.1/LICENSE.txt pkg/dlssnr-amd/LICENSE-Inter.txt
+        cp /usr/share/doc/mingw-w64-common/copyright pkg/dlssnr-amd/LICENSE-mingw-w64.txt
 
     - name: Upload NR add-on
       uses: actions/upload-artifact@v7
