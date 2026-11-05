@@ -861,7 +861,7 @@ struct BbTemporalDlss::Impl {
             return fmt::format("{} {}x{}, {:.1f} ms", static_cast<const char*>(nr.network),
                                nr.width, nr.height, nr.network_ms);
         case SHADNR_BUILDING:
-            return "building the network (the first start takes about 80 s)";
+            return "building the network (about 80 s the first time)";
         case SHADNR_FAILED:
             return fmt::format("failed: {}", static_cast<const char*>(nr.message));
         default:
