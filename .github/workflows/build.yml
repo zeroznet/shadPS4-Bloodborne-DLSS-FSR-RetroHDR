@@ -488,7 +488,7 @@ jobs:
   release:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
-    needs: [get-info, windows-sdl, linux]
+    needs: [get-info, windows-sdl, linux, windows-nr]
     permissions:
       contents: write
     steps:
@@ -532,6 +532,10 @@ jobs:
   windows-nr:
     runs-on: ubuntu-24.04
     needs: get-info
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     env:
       NR_TAG: v0.0.8.2
       NR_COMMIT: c53878b5f0ee1656e740fdbbfd52994d02fe7bd5
@@ -583,9 +587,19 @@ jobs:
         cp nr-src/toolchain/imgui-nr/LICENSE.txt pkg/dlssnr-amd/LICENSE-imgui.txt
         cp nr-src/toolchain/fonts/inter-4.1/LICENSE.txt pkg/dlssnr-amd/LICENSE-Inter.txt
         cp /usr/share/doc/mingw-w64-common/copyright pkg/dlssnr-amd/LICENSE-mingw-w64.txt
+        # One zip whose dlssnr-amd folder and ini go next to shadPS4.exe, named like the others.
+        name=shadPS4-Bloodborne-NR-addon-win64-${{ needs.get-info.outputs.label }}
+        (cd pkg && zip -qr "../$name.zip" dlssnr-amd dlssnr-amd.ini)
+        echo "name=$name" >> $GITHUB_ENV
+
+    - name: Attest
+      if: github.event_name != 'pull_request'
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: shadPS4-Bloodborne-NR-addon-win64-*.zip
 
     - name: Upload NR add-on
       uses: actions/upload-artifact@v7
       with:
-        name: shadPS4-Bloodborne-NR-addon-win64-${{ needs.get-info.outputs.shorthash }}
-        path: pkg
+        name: ${{ env.name }}
+        path: ${{ env.name }}.zip
