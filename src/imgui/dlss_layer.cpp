@@ -916,7 +916,7 @@ void DlssLayer::DrawWindow() {
             settings.Set("sharpness", fmt::format("{:.2f}", sharpness));
 
         if (status.nr_installed) {
-            SeparatorText("Neural rendering (DLSS 5 on AMD)");
+            SeparatorText("DLSS 5 NR");
             bool nr = settings.Get("nr", "0") != "0";
             if (Checkbox("Neural rendering", &nr))
                 settings.Set("nr", nr ? "1" : "0");
@@ -940,8 +940,12 @@ void DlssLayer::DrawWindow() {
             if (SliderFloat("Intensity", &nr_intensity, 0.0f, 2.0f, "%.2f",
                             ImGuiSliderFlags_AlwaysClamp))
                 settings.Set("nr_intensity", fmt::format("{:.2f}", nr_intensity));
-            if (!status.nr_state.empty())
-                TextDisabled("%s", status.nr_state.c_str());
+            // Wrapped: the add-on's messages run longer than the window is wide.
+            if (!status.nr_state.empty()) {
+                PushStyleColor(ImGuiCol_Text, GetStyleColorVec4(ImGuiCol_TextDisabled));
+                TextWrapped("%s", status.nr_state.c_str());
+                PopStyleColor();
+            }
         }
 
         if (Vulkan::RenoDxLoaded()) {

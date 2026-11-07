@@ -857,14 +857,14 @@ struct BbTemporalDlss::Impl {
         if (backend != Backend::AmdFsr)
             return "needs AMD FSR";
         if (!nr_color)
-            return "this colour format cannot be written by the network";
+            return "unsupported colour format";
         const ShadNrStatus nr = neural->Status();
         switch (nr.state) {
         case SHADNR_RUNNING:
             return fmt::format("{} {}x{}, {:.1f} ms", static_cast<const char*>(nr.network),
                                nr.width, nr.height, nr.network_ms);
         case SHADNR_BUILDING:
-            return "building the network (about 80 s the first time)";
+            return "building (about 80 s the first time)";
         case SHADNR_FAILED:
             return fmt::format("failed: {}", static_cast<const char*>(nr.message));
         default:
