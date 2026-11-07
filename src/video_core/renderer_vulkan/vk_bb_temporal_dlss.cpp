@@ -786,7 +786,8 @@ struct BbTemporalDlss::Impl {
     }
 
     // The network on a copy of the upscaler's input, left in SHADER_READ_ONLY_OPTIMAL for it.
-    void RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command, OwnedImage& input,
+    // False when it failed: the copy may be half written, so the upscaler takes the input.
+    bool RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command, OwnedImage& input,
                             const DlssNgx::Resource& depth, vk::Extent2D out, bool reset) {
         using S = vk::PipelineStageFlagBits2;
         using A = vk::AccessFlagBits2;
@@ -834,13 +835,15 @@ struct BbTemporalDlss::Impl {
         };
         const ShadNrSettings settings{BbNrNetwork(tune.nr, BbNeuralRendering::SmallModelPresent()),
                                       tune.nr.scale, tune.nr.intensity};
-        if (!neural.Evaluate(command, frame, settings)) {
+        const bool ran = neural.Evaluate(command, frame, settings);
+        if (!ran) {
             nr_failed = true;
             nr_failure = neural.Status().message;
             LOG_ERROR(Render_Vulkan, "[NR] Evaluation failed ({}); off for this run", nr_failure);
         }
         nr_color->Transit(command, vk::ImageLayout::eShaderReadOnlyOptimal, S::eAllCommands,
                           A::eShaderRead);
+        return ran;
     }
 
     // F1's line for neural rendering.
@@ -1974,9 +1977,9 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
         // FSR 4 waits for and tracks its own submissions through the scheduler: recorded here.
         const auto direct = scheduler.CommandBuffer();
         OwnedImage& upscaler_input = *(linear ? linear_color : snapshot);
-        if (nr_active)
-            RunNeuralRendering(*neural, direct, upscaler_input, depth_resource, out, reset);
-        const auto input = (nr_active ? *nr_color : upscaler_input).Resource();
+        const bool nr_ran = nr_active && RunNeuralRendering(*neural, direct, upscaler_input,
+                                                            depth_resource, out, reset);
+        const auto input = (nr_ran ? *nr_color : upscaler_input).Resource();
         success = backend == Backend::Fsr4
                       ? fsr4->Evaluate(direct, input, depth_resource, motion->Resource(),
                                        upscaled->Resource(), eval, FsrCamera(),
