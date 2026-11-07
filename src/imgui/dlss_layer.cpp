@@ -946,6 +946,7 @@ void DlssLayer::DrawWindow() {
                 TextWrapped("%s", status.nr_state.c_str());
                 PopStyleColor();
             }
+            Separator();
         }
 
         if (Vulkan::RenoDxLoaded()) {
