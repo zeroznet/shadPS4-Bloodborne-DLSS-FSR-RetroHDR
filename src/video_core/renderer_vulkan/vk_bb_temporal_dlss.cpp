@@ -443,7 +443,8 @@ enabled=1
 # or dlss, fsr4, fsr, amdfsr (AMD FSR 4.1, never picked by auto)
 upscaler=auto
 
-# DLSS 5 neural rendering on AMD before AMD FSR 4.1 (dlssnr-amd folder, RX 9000):
+# DLSS 5 neural rendering before the upscaler, from a backend folder next to shadPS4.exe
+# (dlssnr-amd: RX 9000, before AMD FSR 4.1):
 # 1 = on; network auto, silver or small; scale 0.33 to 1 (the network's resolution);
 # intensity 0 to 2
 nr=0
@@ -518,6 +519,22 @@ const char* BackendName(Backend backend) {
            : backend == Backend::Fsr4   ? "FSR 4"
            : backend == Backend::AmdFsr ? amd_fsr.c_str()
                                         : "FSR 3.1";
+}
+
+// The SHADNR_BEFORE_* bit of an upscaler, for the neural rendering backend.
+u32 NrUpscaler(Backend backend) {
+    switch (backend) {
+    case Backend::Dlss:
+        return SHADNR_BEFORE_DLSS;
+    case Backend::Fsr:
+        return SHADNR_BEFORE_FSR31;
+    case Backend::Fsr4:
+        return SHADNR_BEFORE_FSR4;
+    case Backend::AmdFsr:
+        return SHADNR_BEFORE_AMD_FSR;
+    default:
+        return 0;
+    }
 }
 } // namespace
 
@@ -640,6 +657,8 @@ struct BbTemporalDlss::Impl {
     bool nr_was_active{};
     bool nr_failed{};
     std::string nr_failure;
+    // An evaluation before DLSS the recording thread found failed; seen at the next evaluation.
+    std::atomic<bool> nr_evaluate_failed{false};
     // Frame generation reads depth and motion when the frame is presented, after later frames
     // may have overwritten them: each upscaled frame copies them into the next slot.
     struct FrameGenSlot {
@@ -785,10 +804,12 @@ struct BbTemporalDlss::Impl {
                  tune.nr.network, tune.nr.scale, tune.nr.intensity);
     }
 
-    // The network on a copy of the upscaler's input, left in SHADER_READ_ONLY_OPTIMAL for it.
-    // False when it failed: the copy may be half written, so the upscaler takes the input.
-    bool RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command, OwnedImage& input,
-                            const DlssNgx::Resource& depth, vk::Extent2D out, bool reset) {
+    // The network's frame: a copy of the upscaler's input in nr_color (GENERAL), which the network
+    // rewrites in place. command: a vk::CommandBuffer, or QueuedCommands before DLSS.
+    template <typename Command>
+    ShadNrFrame PrepareNeuralRendering(const Command& command, OwnedImage& input,
+                                       const DlssNgx::Resource& depth, vk::Extent2D out,
+                                       bool reset) {
         using S = vk::PipelineStageFlagBits2;
         using A = vk::AccessFlagBits2;
         const vk::ImageLayout source_layout = input.layout;
@@ -814,7 +835,7 @@ struct BbTemporalDlss::Impl {
                                static_cast<u32>(usage)};
         };
         using U = vk::ImageUsageFlagBits;
-        const ShadNrFrame frame{
+        return ShadNrFrame{
             .color = image(nr_color->image.image, nr_color->format, nr_color->extent,
                            vk::ImageLayout::eGeneral,
                            U::eSampled | U::eStorage | U::eTransferSrc | U::eTransferDst),
@@ -833,16 +854,30 @@ struct BbTemporalDlss::Impl {
             .depth_inverted = tune.depth_inverted ? 1u : 0u,
             .reset = reset ? 1u : 0u,
         };
-        const ShadNrSettings settings{BbNrNetwork(tune.nr, BbNeuralRendering::SmallModelPresent()),
-                                      tune.nr.scale, tune.nr.intensity};
-        const bool ran = neural.Evaluate(command, frame, settings);
-        if (!ran) {
-            nr_failed = true;
-            nr_failure = neural.Status().message;
-            LOG_ERROR(Render_Vulkan, "[NR] Evaluation failed ({}); off for this run", nr_failure);
-        }
-        nr_color->Transit(command, vk::ImageLayout::eShaderReadOnlyOptimal, S::eAllCommands,
-                          A::eShaderRead);
+    }
+
+    ShadNrSettings NrSettings() const {
+        return {BbNrNetwork(tune.nr, BbNeuralRendering::SmallModelPresent()), tune.nr.scale,
+                tune.nr.intensity};
+    }
+
+    void StopNeuralRendering(BbNeuralRendering& neural) {
+        nr_failed = true;
+        nr_failure = neural.Status().message;
+        LOG_ERROR(Render_Vulkan, "[NR] Evaluation failed ({}); off for this run", nr_failure);
+    }
+
+    // Before FSR, recorded here; nr_color is left in SHADER_READ_ONLY_OPTIMAL for the upscaler.
+    // False when it failed: the copy may be half written, so the upscaler takes the input.
+    bool RunNeuralRendering(BbNeuralRendering& neural, vk::CommandBuffer command, OwnedImage& input,
+                            const DlssNgx::Resource& depth, vk::Extent2D out, bool reset) {
+        const ShadNrFrame frame = PrepareNeuralRendering(command, input, depth, out, reset);
+        const bool ran = neural.Evaluate(command, frame, NrSettings());
+        if (!ran)
+            StopNeuralRendering(neural);
+        nr_color->Transit(command, vk::ImageLayout::eShaderReadOnlyOptimal,
+                          vk::PipelineStageFlagBits2::eAllCommands,
+                          vk::AccessFlagBits2::eShaderRead);
         return ran;
     }
 
@@ -854,8 +889,8 @@ struct BbTemporalDlss::Impl {
             return "failed: " + nr_failure;
         if (!tune.nr.enabled)
             return "off";
-        if (backend != Backend::AmdFsr)
-            return "needs AMD FSR";
+        if (!neural->RunsBefore(NrUpscaler(backend)))
+            return fmt::format("not with {}", BackendName(backend));
         if (!nr_color)
             return "unsupported colour format";
         const ShadNrStatus nr = neural->Status();
@@ -1558,6 +1593,8 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
     Common::Crumbs::Add("upscaler: evaluate (width, height)", source.info.size.width,
                         source.info.size.height);
     auto* ngx = instance.GetDlssNgx();
+    if (nr_evaluate_failed.exchange(false, std::memory_order_relaxed))
+        StopNeuralRendering(*instance.GetNeuralRendering());
     if (const int failure = evaluate_failed.exchange(0, std::memory_order_relaxed)) {
         (failure == 2 ? decoupled_unsupported : failed) = true;
         LOG_ERROR(Render_Vulkan, "[DLSS-TEMPORAL] Evaluation failed; stock rendering");
@@ -1944,11 +1981,11 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
     upscaled_tone_mapped = renodx;
     const DlssNgx::Resource depth_resource{depth->backing->image.image, *depth_view.image_view,
                                            Range, vk::Format::eR32Sfloat, in};
-    // Neural rendering runs only before AMD FSR. Turning it on or off changes what the upscaler
-    // sees, so its history starts again.
+    // Neural rendering runs before the upscalers its backend names. Turning it on or off changes
+    // what the upscaler sees, so its history starts again.
     auto* const neural = instance.GetNeuralRendering();
-    const bool nr_active =
-        backend == Backend::AmdFsr && tune.nr.enabled && neural && nr_color && !nr_failed;
+    const bool nr_active = tune.nr.enabled && neural && neural->RunsBefore(NrUpscaler(backend)) &&
+                           nr_color && !nr_failed;
     if (nr_active != nr_was_active)
         history_valid = false;
     nr_was_active = nr_active;
@@ -1959,13 +1996,43 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
     bool success = true;
     if (backend == Backend::Dlss) {
         // Recorded by the recording thread like the passes around it; a failure is seen at the
-        // next evaluation (stock rendering from then on, as before).
-        scheduler.Record([ngx, color = (linear ? linear_color : snapshot)->Resource(),
-                          depth_resource, motion_resource = motion->Resource(),
+        // next evaluation (stock rendering from then on, as before). Neural rendering goes in the
+        // same recorded step, so a failed network still leaves DLSS the original input; no
+        // backend runs before DLSS yet, so this part is untested.
+        OwnedImage& upscaler_input = *(linear ? linear_color : snapshot);
+        const ShadNrFrame nr_frame =
+            nr_active ? PrepareNeuralRendering(command, upscaler_input, depth_resource, out, reset)
+                      : ShadNrFrame{};
+        scheduler.Record([ngx, color = upscaler_input.Resource(), depth_resource,
+                          motion_resource = motion->Resource(),
                           output_resource = upscaled->Resource(), eval, failure = &evaluate_failed,
-                          mode = upscale_to ? 2 : 1](vk::CommandBuffer cmdbuf) {
+                          mode = upscale_to ? 2 : 1, neural = nr_active ? neural : nullptr,
+                          nr_frame, nr_settings = NrSettings(),
+                          nr_output = nr_active ? nr_color->Resource() : DlssNgx::Resource{},
+                          nr_stop = &nr_evaluate_failed](vk::CommandBuffer cmdbuf) {
+            DlssNgx::Resource input = color;
+            if (neural) {
+                if (neural->Evaluate(cmdbuf, nr_frame, nr_settings))
+                    input = nr_output;
+                else
+                    nr_stop->store(true, std::memory_order_relaxed);
+                const vk::ImageMemoryBarrier2 barrier{
+                    .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .srcAccessMask =
+                        vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                    .oldLayout = vk::ImageLayout::eGeneral,
+                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = nr_output.image,
+                    .subresourceRange = Range};
+                cmdbuf.pipelineBarrier2(vk::DependencyInfo{.imageMemoryBarrierCount = 1,
+                                                           .pImageMemoryBarriers = &barrier});
+            }
             const auto start = std::chrono::steady_clock::now();
-            if (!ngx->Evaluate(cmdbuf, color, depth_resource, motion_resource, output_resource,
+            if (!ngx->Evaluate(cmdbuf, input, depth_resource, motion_resource, output_resource,
                                eval)) {
                 failure->store(mode, std::memory_order_relaxed);
             }
@@ -1973,6 +2040,8 @@ bool BbTemporalDlss::Impl::RunDlss(const Instance& instance, Runtime& runtime, S
                 (std::chrono::steady_clock::now() - start).count(), std::memory_order_relaxed);
             RecordingCosts::upscaler_calls.fetch_add(1, std::memory_order_relaxed);
         });
+        if (nr_active)
+            nr_color->layout = vk::ImageLayout::eShaderReadOnlyOptimal; // by the recorded barrier
     } else {
         // FSR 4 waits for and tracks its own submissions through the scheduler: recorded here.
         const auto direct = scheduler.CommandBuffer();

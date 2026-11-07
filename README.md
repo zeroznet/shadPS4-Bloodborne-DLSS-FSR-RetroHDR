@@ -517,7 +517,12 @@ For the curious, or for porting this to a newer shadPS4:
   and a model present, the Vulkan device is created through it, so the device gets what the
   network needs. Each frame the network runs on a copy of AMD FSR 4.1's colour input, with the
   same depth and motion vectors, on shadPS4's own command buffer; AMD FSR then takes that copy.
-  Until the network is built, frames go through unchanged.
+  Until the network is built, frames go through unchanged. That C interface
+  (`dlssnr_addon/shadps4_nr.h`) is the one every backend speaks: another one, such as NVIDIA's own
+  NR through NGX on RTX cards, is a `shadps4_nr.dll` in its own folder that names the upscalers it
+  runs before, plus a line in the backend list in `vk_bb_neural_rendering.cpp`. Before DLSS the
+  network is recorded in the same step as DLSS; no backend runs there yet, so that path is
+  untested.
 - **DLSS frame generation**: Streamline is loaded before the Vulkan instance and hands out its
   versions of the instance, device and swapchain functions. Each upscaled frame keeps its depth,
   motion and camera matrices in a small ring until presented. DLSS-G also gets the window without

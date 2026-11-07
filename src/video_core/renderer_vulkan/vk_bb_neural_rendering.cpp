@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Robert Bopko
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
@@ -16,12 +17,42 @@ static_assert(sizeof(ShadNrImage) == 32);
 static_assert(sizeof(ShadNrFrame) == 128);
 static_assert(sizeof(ShadNrSettings) == 12);
 static_assert(sizeof(ShadNrStatus) == 276);
+static_assert(sizeof(ShadNrInfo) == 36);
 
 namespace Vulkan {
 
 namespace {
-std::filesystem::path AddonDirectory() {
-    return BbLibrary::ExecutableDirectory() / "dlssnr-amd";
+// The backends, tried in order: each is a shadps4_nr.dll in its own folder next to the executable.
+// Another one (NVIDIA's NR through NGX, say) is a line here.
+struct BackendFiles {
+    const char* folder;
+    const char* model;         // needed beside shadps4_nr.dll; null: nothing else
+    const char* small_network; // offers CC_SMALL_FP8 when present; null: always offered
+};
+constexpr std::array Backends{BackendFiles{"dlssnr-amd", "dlssnr.bin", "dlssnr-small.bin"}};
+
+std::filesystem::path Folder(const BackendFiles& backend) {
+    return BbLibrary::ExecutableDirectory() / backend.folder;
+}
+
+const BackendFiles* Installed() {
+#ifdef _WIN32
+    static const BackendFiles* const installed = []() -> const BackendFiles* {
+        const char* setting = std::getenv("SHADPS4_NR");
+        if (setting && std::string_view{setting} == "0")
+            return nullptr;
+        for (const auto& backend : Backends) {
+            const auto folder = Folder(backend);
+            if (std::filesystem::is_regular_file(folder / "shadps4_nr.dll") &&
+                (!backend.model || std::filesystem::is_regular_file(folder / backend.model)))
+                return &backend;
+        }
+        return nullptr;
+    }();
+    return installed;
+#else
+    return nullptr; // DLSSNR-AMD's Windows runtime is the one built here
+#endif
 }
 
 // The network's background builds submit to the graphics queue: held like a present, which takes
@@ -38,6 +69,7 @@ void UnlockQueue(void*) {
 
 struct BbNeuralRendering::Api {
     decltype(&shadps4_nr_abi_version) abi_version;
+    decltype(&shadps4_nr_info) info;
     decltype(&shadps4_nr_create_device) create_device;
     decltype(&shadps4_nr_init) init;
     decltype(&shadps4_nr_evaluate) evaluate;
@@ -46,48 +78,46 @@ struct BbNeuralRendering::Api {
 };
 
 bool BbNeuralRendering::Present() {
-#ifdef _WIN32
-    static const bool present = [] {
-        const char* setting = std::getenv("SHADPS4_NR");
-        if (setting && std::string_view{setting} == "0")
-            return false;
-        return std::filesystem::is_regular_file(AddonDirectory() / "shadps4_nr.dll") &&
-               std::filesystem::is_regular_file(AddonDirectory() / "dlssnr.bin");
-    }();
-    return present;
-#else
-    return false; // DLSSNR-AMD's Windows runtime is the one built here
-#endif
+    return Installed() != nullptr;
 }
 
 bool BbNeuralRendering::SmallModelPresent() {
-    static const bool present =
-        std::filesystem::is_regular_file(AddonDirectory() / "dlssnr-small.bin");
+    static const bool present = [] {
+        const BackendFiles* backend = Installed();
+        if (!backend || !backend->small_network)
+            return backend != nullptr;
+        return std::filesystem::is_regular_file(Folder(*backend) / backend->small_network);
+    }();
     return present;
 }
 
 std::unique_ptr<BbNeuralRendering> BbNeuralRendering::Load() {
-    if (!Present())
+    const BackendFiles* backend = Installed();
+    if (!backend)
         return {};
     auto nr = std::unique_ptr<BbNeuralRendering>{new BbNeuralRendering};
-    nr->module = BbLibrary::Load(AddonDirectory() / "shadps4_nr.dll");
+    nr->module = BbLibrary::Load(Folder(*backend) / "shadps4_nr.dll");
     const auto find = [&](const char* name) { return BbLibrary::Find(nr->module, name); };
     nr->api = std::make_unique<Api>(
         Api{reinterpret_cast<decltype(Api::abi_version)>(find("shadps4_nr_abi_version")),
+            reinterpret_cast<decltype(Api::info)>(find("shadps4_nr_info")),
             reinterpret_cast<decltype(Api::create_device)>(find("shadps4_nr_create_device")),
             reinterpret_cast<decltype(Api::init)>(find("shadps4_nr_init")),
             reinterpret_cast<decltype(Api::evaluate)>(find("shadps4_nr_evaluate")),
             reinterpret_cast<decltype(Api::status)>(find("shadps4_nr_status")),
             reinterpret_cast<decltype(Api::shutdown)>(find("shadps4_nr_shutdown"))});
     const auto& a = *nr->api;
-    if (!a.abi_version || !a.create_device || !a.init || !a.evaluate || !a.status || !a.shutdown ||
-        a.abi_version() != SHADPS4_NR_ABI_VERSION) {
-        LOG_WARNING(Render_Vulkan, "[NR] dlssnr-amd/shadps4_nr.dll is missing or from another "
-                                   "version; neural rendering off");
+    if (!a.abi_version || !a.info || !a.create_device || !a.init || !a.evaluate || !a.status ||
+        !a.shutdown || a.abi_version() != SHADPS4_NR_ABI_VERSION) {
+        LOG_WARNING(Render_Vulkan, "[NR] {}/shadps4_nr.dll is missing or another version; NR off",
+                    backend->folder);
         nr->api.reset();
         return {};
     }
-    LOG_INFO(Render_Vulkan, "[NR] dlssnr-amd/shadps4_nr.dll loaded");
+    a.info(&nr->info);
+    nr->info.name[sizeof nr->info.name - 1] = '\0';
+    LOG_INFO(Render_Vulkan, "[NR] {} loaded from {}/shadps4_nr.dll", nr->info.name,
+             backend->folder);
     return nr;
 }
 
@@ -123,8 +153,7 @@ bool BbNeuralRendering::Init(vk::Instance instance, vk::PhysicalDevice physical,
     if (ready)
         LOG_INFO(Render_Vulkan, "[NR] Ready on queue family {}", queue_family);
     else
-        LOG_WARNING(Render_Vulkan, "[NR] The network's session could not start (see "
-                                   "dlssnr-amd.log); neural rendering off");
+        LOG_WARNING(Render_Vulkan, "[NR] {} did not start (see its log); NR off", info.name);
     return ready;
 }
 

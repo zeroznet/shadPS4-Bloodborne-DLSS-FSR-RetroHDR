@@ -120,6 +120,15 @@ SHADPS4_NR_API uint32_t shadps4_nr_abi_version(void) {
     return SHADPS4_NR_ABI_VERSION;
 }
 
+SHADPS4_NR_API void shadps4_nr_info(ShadNrInfo* out) {
+    if (!out)
+        return;
+    *out = ShadNrInfo{};
+    CopyText(out->name, sizeof out->name, "DLSSNR-AMD");
+    // Tested in front of AMD FSR 4.1 only.
+    out->upscalers = SHADNR_BEFORE_AMD_FSR;
+}
+
 SHADPS4_NR_API VkResult shadps4_nr_create_device(PFN_vkCreateDevice create,
                                                  VkPhysicalDevice physical,
                                                  const VkDeviceCreateInfo* info,

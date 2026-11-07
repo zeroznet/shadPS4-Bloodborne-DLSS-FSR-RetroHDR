@@ -12,19 +12,28 @@
 
 namespace Vulkan {
 
-// The optional DLSS 5 neural rendering add-on: dlssnr-amd/shadps4_nr.dll next to the executable
-// with the model mochizuki0323's DLSSNR-AMD installer extracts (dlssnr-amd/dlssnr.bin). It runs
-// the network on shadPS4's device, so the device is created through it; when its files are absent
-// nothing about the device changes.
+// Optional DLSS 5 neural rendering: the first installed backend of the list in the .cpp, a
+// shadps4_nr.dll (dlssnr_addon/shadps4_nr.h) in its own folder next to the executable, today
+// dlssnr-amd with the model mochizuki0323's DLSSNR-AMD installer extracts. It runs the network on
+// shadPS4's device, so the device is created through it; with no backend installed nothing about
+// the device changes.
 class BbNeuralRendering {
 public:
-    // Both files present and SHADPS4_NR is not "0"; Windows only.
+    // A backend's files are present and SHADPS4_NR is not "0"; Windows only.
     static bool Present();
-    // dlssnr-amd/dlssnr-small.bin present: CC_SMALL_FP8 can be offered.
+    // CC_SMALL_FP8 can be offered (dlssnr-amd: dlssnr-small.bin is installed).
     static bool SmallModelPresent();
-    // Null when the add-on cannot be loaded or is from another version.
+    // Null when the backend cannot be loaded or speaks another ABI version.
     static std::unique_ptr<BbNeuralRendering> Load();
     ~BbNeuralRendering();
+
+    const char* Name() const {
+        return info.name;
+    }
+    // upscaler: a SHADNR_BEFORE_* bit.
+    bool RunsBefore(u32 upscaler) const {
+        return (info.upscalers & upscaler) != 0;
+    }
 
     vk::Result CreateDevice(vk::PhysicalDevice physical, const vk::DeviceCreateInfo& info,
                             vk::Device& out);
@@ -40,6 +49,7 @@ private:
     struct Api;
     void* module{};
     std::unique_ptr<Api> api;
+    ShadNrInfo info{};
     bool device_made{};
 };
 

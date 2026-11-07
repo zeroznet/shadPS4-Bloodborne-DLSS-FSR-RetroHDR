@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2026 Robert Bopko
 // SPDX-License-Identifier: MIT
 
-// The C interface of dlssnr-amd/shadps4_nr.dll, the optional DLSS 5 neural rendering add-on:
-// mochizuki0323's DLSSNR-AMD network (gitlab.com/mochizuki0323/DLSSNR-AMD, MIT) on shadPS4's own
-// Vulkan device, run in place on the colour just before the upscaler. The add-on is built with
-// mingw and shadPS4 with MSVC, so everything here is plain C with fixed-size fields; the
+// The C interface of a DLSS 5 neural rendering backend: a shadps4_nr.dll in the backend's own
+// folder next to shadPS4.exe, run in place on the render-size colour just before the upscaler on
+// shadPS4's own Vulkan device. The one built here is dlssnr-amd/shadps4_nr.dll, mochizuki0323's
+// DLSSNR-AMD network (gitlab.com/mochizuki0323/DLSSNR-AMD, MIT); another backend (NVIDIA's own
+// NR through NGX, say) exports the same functions from its own folder, which
+// vk_bb_neural_rendering.cpp lists. Backends may be built with another compiler than shadPS4 (this
+// one with mingw, shadPS4 with MSVC), so everything here is plain C with fixed-size fields; the
 // static_asserts below fail one of the two builds if the layouts ever differ.
 
 #pragma once
@@ -18,7 +21,7 @@
 #define SHADPS4_NR_API
 #endif
 
-#define SHADPS4_NR_ABI_VERSION 1u
+#define SHADPS4_NR_ABI_VERSION 2u
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +50,19 @@ typedef struct ShadNrSettings {
 
 enum { SHADNR_IDLE = 0, SHADNR_BUILDING = 1, SHADNR_RUNNING = 2, SHADNR_FAILED = 3 };
 
+// The upscalers a backend runs in front of (ShadNrInfo.upscalers).
+enum {
+    SHADNR_BEFORE_DLSS = 1,
+    SHADNR_BEFORE_FSR31 = 2,
+    SHADNR_BEFORE_FSR4 = 4,
+    SHADNR_BEFORE_AMD_FSR = 8,
+};
+
+typedef struct ShadNrInfo {
+    char name[32];      // for the log, e.g. "DLSSNR-AMD"
+    uint32_t upscalers; // SHADNR_BEFORE_* bits
+} ShadNrInfo;
+
 typedef struct ShadNrStatus {
     uint32_t state;
     float network_ms, gpu_ms;
@@ -58,6 +74,7 @@ typedef struct ShadNrStatus {
 typedef void (*ShadNrQueueLock)(void* context);
 
 SHADPS4_NR_API uint32_t shadps4_nr_abi_version(void);
+SHADPS4_NR_API void shadps4_nr_info(ShadNrInfo* out);
 // vkCreateDevice with the network's extensions and features added; made as asked when that fails
 // (*features_added then 0).
 SHADPS4_NR_API VkResult shadps4_nr_create_device(PFN_vkCreateDevice create, VkPhysicalDevice physical,
@@ -69,7 +86,9 @@ SHADPS4_NR_API VkResult shadps4_nr_create_device(PFN_vkCreateDevice create, VkPh
 SHADPS4_NR_API int32_t shadps4_nr_init(VkInstance instance, VkPhysicalDevice physical,
                                        VkDevice device, uint32_t queue_family, ShadNrQueueLock lock,
                                        ShadNrQueueLock unlock, void* context);
-// 0 = ran, or passed the frame through unchanged while the network builds; < 0 = failed.
+// 0 = ran, or passed the frame through unchanged while the network builds; < 0 = failed. Called on
+// shadPS4's render thread before FSR and on its recording thread before DLSS, never both at once;
+// cmd is the frame's command buffer, recorded in order with the upscaler that follows.
 SHADPS4_NR_API int32_t shadps4_nr_evaluate(VkCommandBuffer cmd, const ShadNrFrame* frame,
                                            const ShadNrSettings* settings);
 SHADPS4_NR_API void shadps4_nr_status(ShadNrStatus* out);
@@ -83,4 +102,5 @@ static_assert(sizeof(ShadNrImage) == 32, "ShadNrImage layout");
 static_assert(sizeof(ShadNrFrame) == 128, "ShadNrFrame layout");
 static_assert(sizeof(ShadNrSettings) == 12, "ShadNrSettings layout");
 static_assert(sizeof(ShadNrStatus) == 276, "ShadNrStatus layout");
+static_assert(sizeof(ShadNrInfo) == 36, "ShadNrInfo layout");
 #endif
