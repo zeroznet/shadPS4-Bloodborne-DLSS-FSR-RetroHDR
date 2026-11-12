@@ -75,7 +75,7 @@ FSR 4.1 and NR install like any of eFMann's add-ons: a folder next to `shadPS4.e
 - [AMD FSR 4.1](../../blob/feat/native-nr/README.md#optional-amd-fsr-41)
 - [DLSS 5 neural rendering on AMD](../../blob/feat/native-nr/README.md#optional-dlss-5-neural-rendering-on-amd) (needs AMD FSR 4.1)
 
-Builds of these branches are on [Releases](../../releases), each with `SHA256SUMS.txt`. Delete `%APPDATA%\shadPS4\cache\CUSA03173` when you switch to a different build.
+Delete `%APPDATA%\shadPS4\cache\CUSA03173` when you switch to a different build.
 
 The original RetroHDR release for IFreemz 1.9.0-pre.3 is still there as [v1.9.0-pre.3-retrohdr.1](../../releases/tag/v1.9.0-pre.3-retrohdr.1); smoke results in [docs/smoke-2026-10-15.md](docs/smoke-2026-10-15.md), design and plan in [docs/superpowers/](docs/superpowers/).
 
